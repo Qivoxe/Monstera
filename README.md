@@ -108,24 +108,6 @@ npm run dev
 
 Open **http://localhost:3000**. Register with your details and home location, then use the app. The browser should use `localhost`, not `0.0.0.0`; the latter is a bind address rather than a browser destination.
 
-If `frontend/.env` already exists, do not overwrite it with `Copy-Item`; review its values instead. The default local settings are:
-
-```dotenv
-# frontend/.env
-VITE_API_BASE_URL=/api/v1
-BACKEND_API_URL=http://127.0.0.1:8000
-```
-
-```dotenv
-# backend/.env
-DATABASE_URL=sqlite:///./monstera.db
-FRONTEND_ORIGINS=http://localhost:3000,http://localhost:5173
-LOG_LEVEL=INFO
-OPEN_METEO_BASE_URL=https://air-quality-api.open-meteo.com/v1/air-quality
-COOKIE_SECURE=false
-SESSION_DAYS=14
-```
-
 ### Useful development commands
 
 Frontend, from `frontend/`:
