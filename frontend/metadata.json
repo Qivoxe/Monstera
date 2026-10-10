@@ -1,0 +1,6 @@
+{
+  "name": "Monstera — Air Intelligence",
+  "description": "Hyper-local air quality intelligence, commute simulation, and personalized micro-climate exposure reduction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
