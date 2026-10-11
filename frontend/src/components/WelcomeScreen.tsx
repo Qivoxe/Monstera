@@ -59,6 +59,7 @@ export function WelcomeScreen({ onComplete, initialUser = null }: WelcomeScreenP
           return;
         }
         const user = await register(displayName.trim(), email, password);
+        setPendingUser(user);
         const preferences = await savePreferences({
           ...DEFAULT_PREFERENCES,
           home_location: formatPlaceName(chosenPlace),

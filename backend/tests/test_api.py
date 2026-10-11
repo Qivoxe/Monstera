@@ -225,6 +225,42 @@ def test_register_saves_display_name_to_account():
     assert response.json()["display_name"] == "Jordan Lee"
 
 
+def test_signup_login_session_cookie_and_current_user_flow():
+    client = TestClient(app)
+    registration = client.post("/api/v1/auth/register", json={
+        "display_name": "Jordan Lee", "email": "jordan@example.com", "password": "correct horse battery staple 42",
+    })
+    assert registration.status_code == 201
+    assert registration.json()["email"] == "jordan@example.com"
+    assert registration.json()["csrf_token"]
+    cookie = registration.headers["set-cookie"].lower()
+    assert "monstera_session=" in cookie
+    assert "httponly" in cookie and "samesite=lax" in cookie and "path=/api/v1" in cookie
+    assert client.get("/api/v1/auth/me").json()["id"] == registration.json()["id"]
+    assert client.put("/api/v1/preferences", headers={"X-CSRF-Token": registration.json()["csrf_token"]}, json={
+        "sensitivity": "normal", "commute_reminder": False, "indoor_air_alert": False,
+        "home_location": "New Delhi, Delhi, India", "home_latitude": 28.6139, "home_longitude": 77.209,
+    }).status_code == 200
+    client.post("/api/v1/auth/logout", headers={"X-CSRF-Token": registration.json()["csrf_token"]})
+    assert client.get("/api/v1/auth/me").status_code == 401
+    login = client.post("/api/v1/auth/login", json={"email": "jordan@example.com", "password": "correct horse battery staple 42"})
+    assert login.status_code == 200
+    assert client.get("/api/v1/auth/me").json()["id"] == registration.json()["id"]
+
+
+def test_login_rejects_invalid_credentials_and_registration_reports_duplicate_email():
+    client = TestClient(app)
+    payload = {"display_name": "Jordan Lee", "email": "jordan@example.com", "password": "correct horse battery staple 42"}
+    assert client.post("/api/v1/auth/register", json=payload).status_code == 201
+    duplicate = client.post("/api/v1/auth/register", json=payload)
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "An account with this email already exists"
+    invalid_login = client.post("/api/v1/auth/login", json={"email": payload["email"], "password": "wrong password long"})
+    assert invalid_login.status_code == 401
+    assert invalid_login.json()["detail"] == "Email or password is incorrect"
+    assert TestClient(app).get("/api/v1/auth/me").status_code == 401
+
+
 def test_exposure_and_simulations_are_scoped_to_account():
     client_a, csrf_a = signed_in()
     payload = {"segments": [{
