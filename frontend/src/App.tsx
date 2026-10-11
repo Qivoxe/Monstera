@@ -17,16 +17,29 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [profilePreferences, setProfilePreferences] = useState<Preferences | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setCheckingSession(true);
+    setSessionError(null);
     loadCurrentUser().then(async (user) => {
+      if (!active) return;
       setCurrentUser(user);
       if (user) {
-        try { setProfilePreferences(await getPreferences()); }
-        catch { setProfilePreferences(null); }
+        try {
+          const preferences = await getPreferences();
+          if (active) setProfilePreferences(preferences);
+        } catch (error) {
+          if (active) setSessionError(error instanceof Error ? error.message : 'Could not load your account preferences.');
+        }
       }
-    }).finally(() => setCheckingSession(false));
-  }, []);
+    }).catch((error: unknown) => {
+      if (active) setSessionError(error instanceof Error ? error.message : 'Could not check your Monstera session.');
+    }).finally(() => { if (active) setCheckingSession(false); });
+    return () => { active = false; };
+  }, [sessionAttempt]);
 
   const handleAuthChange = (user: AuthUser | null) => {
     setCurrentUser(user);
@@ -34,6 +47,7 @@ export default function App() {
   };
 
   if (checkingSession) return <main className="min-h-screen bg-[#f9faf5] flex items-center justify-center text-sm text-[#3f4942]">Loading your Monstera account…</main>;
+  if (sessionError) return <main className="min-h-screen bg-[#f9faf5] px-5 flex items-center justify-center"><section role="alert" className="w-full max-w-md rounded-3xl border border-[#edeee9] bg-white p-8 text-center shadow-sm"><h1 className="font-headline text-2xl font-bold">We couldn’t load your account</h1><p className="mt-3 text-sm text-[#6f7a72]">{sessionError}</p><button onClick={() => setSessionAttempt((attempt) => attempt + 1)} className="mt-6 rounded-xl bg-[#0c6440] px-5 py-3 text-sm font-semibold text-white">Try again</button></section></main>;
   if (!currentUser || !profilePreferences?.home_location || profilePreferences.home_latitude === null || profilePreferences.home_longitude === null) {
     return <WelcomeScreen key={currentUser?.id ?? 'new-user'} initialUser={currentUser} onComplete={(user, preferences) => { setCurrentUser(user); setProfilePreferences(preferences); }} />;
   }

@@ -1,3 +1,8 @@
+import { normalizeLocationSearchResponse } from './locationSearch';
+import type { GeocodedLocation, LocationSearchResponse } from './locationSearch';
+export { normalizeLocationSearchResponse } from './locationSearch';
+export type { GeocodedLocation, LocationSearchResponse } from './locationSearch';
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
 
 let csrfToken = '';
@@ -30,12 +35,6 @@ export interface SimulationResult {
   baseline_dose_ug_h_m3: number; alternative_dose_ug_h_m3: number;
   delta_ug_h_m3: number; delta_percent: number | null; unit: string; assumptions: string[];
 }
-export interface GeocodedLocation {
-  id?: number; name: string; country: string | null; country_code?: string | null;
-  admin1?: string | null; admin2?: string | null; admin3?: string | null; admin4?: string | null;
-  latitude: number; longitude: number;
-}
-export interface LocationSearchResponse extends Partial<GeocodedLocation> { results: GeocodedLocation[] }
 export interface SavedLocation { id: string; name: string; latitude: number; longitude: number; place_label: string | null; created_at: string; updated_at: string }
 export interface RouteAlternative {
   id: string; geometry: { type: 'LineString'; coordinates: number[][] }; distance_m: number; duration_s: number;
@@ -44,6 +43,13 @@ export interface RouteAlternative {
 }
 export interface RouteComparison { status: 'comparable' | 'insufficient_data'; recommendation: string | null; routes: RouteAlternative[]; methodology: string[] }
 export interface SavedRoutine { id: string; title: string; corridor_id: string; created_at: string; simulation: Record<string, unknown> }
+
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -54,8 +60,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'include' });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
-    try { message = (await response.json()).detail || message; } catch { /* keep generic error */ }
-    throw new Error(message);
+    try {
+      const payload: unknown = await response.json();
+      if (typeof payload === 'object' && payload !== null && 'detail' in payload && typeof payload.detail === 'string') message = payload.detail;
+    } catch { /* keep generic error */ }
+    throw new ApiError(response.status, message);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -70,7 +79,8 @@ export async function getPm25Forecast(latitude: number, longitude: number): Prom
 export async function geocodeLocation(name: string, countryCode?: string): Promise<LocationSearchResponse> {
   const query = new URLSearchParams({ name });
   if (countryCode) query.set('country_code', countryCode);
-  return request(`/locations/search?${query}`);
+  const payload = await request<unknown>(`/locations/search?${query}`);
+  return normalizeLocationSearchResponse(payload);
 }
 export function prefersIndiaSearch(): boolean {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -96,7 +106,11 @@ export async function login(email: string, password: string): Promise<AuthUser> 
 }
 export async function loadCurrentUser(): Promise<AuthUser | null> {
   try { return rememberAuth(await request('/auth/me')); }
-  catch { csrfToken = ''; return null; }
+  catch (error) {
+    csrfToken = '';
+    if (error instanceof ApiError && error.status === 401) return null;
+    throw error;
+  }
 }
 export async function logout(): Promise<void> { await request('/auth/logout', { method: 'POST' }); csrfToken = ''; }
 export async function deleteAccount(): Promise<void> { await request('/auth/account', { method: 'DELETE' }); csrfToken = ''; }
