@@ -11,11 +11,16 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = parseInt(process.env.PORT || '3000', 10);
+const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(express.json());
 
-const backendApiUrl = process.env.BACKEND_API_URL || 'http://127.0.0.1:8000';
+const backendApiUrl = process.env.BACKEND_API_URL || (isProduction ? '' : 'http://127.0.0.1:8000');
 app.use('/api/v1', async (req, res) => {
+  if (!backendApiUrl) {
+    res.status(503).json({ detail: 'Backend API is not configured', code: 'backend_unavailable' });
+    return;
+  }
   try {
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
@@ -98,8 +103,6 @@ Keep the summary clean, punchy, formatted in 3 crisp bullet points, under 140 wo
     });
   }
 });
-
-const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
   if (!isProduction) {

@@ -9,6 +9,7 @@ export interface AirQualityForecast {
     valid_at: string; provider: string; grid_location: { latitude: number; longitude: number };
   }>;
   attribution: string;
+  source?: string; kind?: 'forecast'; retrieved_at?: string; freshness?: string;
 }
 
 export interface AuthUser { id: string; display_name: string | null; email: string; csrf_token: string }
@@ -29,7 +30,19 @@ export interface SimulationResult {
   baseline_dose_ug_h_m3: number; alternative_dose_ug_h_m3: number;
   delta_ug_h_m3: number; delta_percent: number | null; unit: string; assumptions: string[];
 }
-export interface GeocodedLocation { name: string; country: string | null; latitude: number; longitude: number }
+export interface GeocodedLocation {
+  id?: number; name: string; country: string | null; country_code?: string | null;
+  admin1?: string | null; admin2?: string | null; admin3?: string | null; admin4?: string | null;
+  latitude: number; longitude: number;
+}
+export interface LocationSearchResponse extends Partial<GeocodedLocation> { results: GeocodedLocation[] }
+export interface SavedLocation { id: string; name: string; latitude: number; longitude: number; place_label: string | null; created_at: string; updated_at: string }
+export interface RouteAlternative {
+  id: string; geometry: { type: 'LineString'; coordinates: number[][] }; distance_m: number; duration_s: number;
+  exposure_proxy_ug_h_m3: number | null; exposure_unit: string; data_coverage: number; sample_count: number;
+  available_sample_count: number; source: string; retrieved_at: string; freshness: string; provenance: Array<Record<string, unknown>>; uncertainty: string;
+}
+export interface RouteComparison { status: 'comparable' | 'insufficient_data'; recommendation: string | null; routes: RouteAlternative[]; methodology: string[] }
 export interface SavedRoutine { id: string; title: string; corridor_id: string; created_at: string; simulation: Record<string, unknown> }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -54,10 +67,26 @@ export async function getPm25Forecast(latitude: number, longitude: number): Prom
   const query = new URLSearchParams({ latitude: String(latitude), longitude: String(longitude), hours: '24' });
   return request(`/air-quality/forecast?${query}`);
 }
-export async function geocodeLocation(name: string): Promise<GeocodedLocation> {
+export async function geocodeLocation(name: string, countryCode?: string): Promise<LocationSearchResponse> {
   const query = new URLSearchParams({ name });
+  if (countryCode) query.set('country_code', countryCode);
   return request(`/locations/search?${query}`);
 }
+export function prefersIndiaSearch(): boolean {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return timezone === 'Asia/Kolkata' || timezone === 'Asia/Calcutta' || navigator.language.toLowerCase().endsWith('-in');
+}
+export function formatPlaceName(place: GeocodedLocation): string {
+  return [place.name, place.admin4, place.admin3, place.admin2, place.admin1, place.country]
+    .filter((part, index, all): part is string => Boolean(part?.trim()) && all.indexOf(part) === index)
+    .join(', ');
+}
+export const getSavedLocations = () => request<SavedLocation[]>('/locations/saved');
+export const saveLocation = (input: Pick<SavedLocation, 'name' | 'latitude' | 'longitude' | 'place_label'>) => request<SavedLocation>('/locations/saved', { method: 'POST', body: JSON.stringify(input) });
+export const updateSavedLocation = (id: string, input: Partial<Pick<SavedLocation, 'name' | 'latitude' | 'longitude' | 'place_label'>>) => request<SavedLocation>(`/locations/saved/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) });
+export const deleteSavedLocation = (id: string) => request<void>(`/locations/saved/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const compareRoutes = (input: { origin: { latitude: number; longitude: number }; destination: { latitude: number; longitude: number }; departure_at: string; mode?: 'driving' }) =>
+  request<RouteComparison>('/routes/compare', { method: 'POST', body: JSON.stringify({ ...input, mode: input.mode || 'driving' }) });
 
 export async function register(display_name: string, email: string, password: string): Promise<AuthUser> {
   return rememberAuth(await request('/auth/register', { method: 'POST', body: JSON.stringify({ display_name, email, password }) }));

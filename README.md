@@ -28,9 +28,10 @@ Monstera brings these pieces together in one workflow. It also makes the data li
 - **Personal onboarding:** create an account and save a home city or location.
 - **PM2.5 forecast:** view hourly regional air-quality forecasts using Open-Meteo and Copernicus CAMS data.
 - **Location view:** see the saved location and its forecast context on the pollution map.
+- **Multiple places:** search and inspect locations, request browser location access, and save named places without changing the saved home.
 - **Exposure log:** record activities and review saved exposure estimates.
 - **Exposure planning:** review logged activity and use the planner to support day-to-day decisions.
-- **Commute comparison:** compare forecast conditions for different departure times between a saved home location and a destination.
+- **Pollution-aware route comparison:** compare OSRM driving alternatives with a regional forecast concentration-time proxy when coverage and separation support a comparison.
 - **Saved routines and simulations:** keep useful commute comparisons for later.
 - **Account-scoped data:** saved records belong to the signed-in account.
 
@@ -154,7 +155,9 @@ Application routes are grouped under `/api/v1`.
 | `/auth/*` | Registration, login, logout, current session, account actions |
 | `/preferences` | User preferences and saved home location |
 | `/locations/search` | Search for a place using geocoding |
+| `/locations/saved` | Authenticated saved-place list/create; `/locations/saved/{id}` supports rename/update/delete |
 | `/air-quality/forecast` | Retrieve and save forecast data |
+| `/routes/compare` | Authenticated OSRM driving alternatives with forecast exposure proxy and coverage metadata |
 | `/exposure/estimates` and `/exposure/history` | Record and view exposure activity |
 | `/planner/*` | Activity summaries and planning actions |
 | `/simulations` and `/routines` | Commute comparisons and saved routines |
@@ -166,7 +169,8 @@ For the full route list and request schemas, use the live [FastAPI Swagger docum
 
 - PM2.5 values are regional model forecasts, not readings from a local sensor.
 - Forecast availability and accuracy depend on the upstream provider and its data.
-- Commute comparison evaluates forecast windows using the locations and duration entered by the user. It does **not** calculate an actual route or model traffic, transport mode, indoor filtration, or street-by-street pollution.
+- Routing uses OSRM-compatible **driving** routes and does not model live traffic. Regional forecast grids do not resolve roadside pollution. Exposure proxy is not inhaled dose or medical risk; weak coverage or small differences return an insufficient-data state.
+- The default public OSRM demo host is for low-volume development and has no production availability guarantee. Configure a hosted or self-hosted compatible provider before production use.
 - Logged exposure summaries reflect only the activities a user records. Missing activity data should not be interpreted as zero exposure.
 
 ## Security and data notes
@@ -175,6 +179,14 @@ For the full route list and request schemas, use the live [FastAPI Swagger docum
 - Keep secrets on the server; never put private credentials in `VITE_*` variables because those values are bundled into the frontend.
 - Use HTTPS and secure cookie settings for production.
 - SQLite is useful for local development, but a persistent production database should be configured for long-term user data. Confirm the deployed environment's database and storage configuration before relying on it for permanent records.
+
+### Routing and migration
+
+`backend/.env.example` lists `ROUTING_PROVIDER_URL`, timeout, alternative count, sampling interval/cap, and the bounded provider-cache size. The cache is in-memory per API process and is not shared across Elastic Beanstalk instances. Forecast values retain their provider valid times and retrieval timestamps.
+
+Apply the saved-place schema with `alembic upgrade head` from `backend/`. The additive migration `0004_saved_locations` does not alter existing home preferences. Rollback with `alembic downgrade 0003_user_profile`; this drops saved places created after upgrade, so export any needed records first. Apply and verify migrations on staging before production; never recreate the deployed database.
+
+Before promotion, verify registration/login/logout, home preferences, forecast, exposure history, planner, simulation, routines, health/readiness, saved-place CRUD/user isolation, and route provider failure handling. Retain the current Elastic Beanstalk version for rollback and monitor health/logs after rollout. This repository change does not deploy to AWS.
 
 ## Team and project
 

@@ -43,6 +43,21 @@ def test_air_quality_validates_coordinates_before_provider_call():
     assert response.json()["code"] == "validation_error"
 
 
+def test_location_search_endpoint_returns_candidates_and_passes_country_filter(monkeypatch):
+    class Geocoder:
+        def __init__(self): pass
+        async def search(self, name, country_code):
+            assert name == "East Delhi"
+            assert country_code == "IN"
+            item = {"name": "East Delhi", "country": "India", "country_code": "IN", "admin1": "Delhi", "latitude": 28.65, "longitude": 77.30}
+            return {"results": [item], **item}
+    monkeypatch.setattr(routes, "OpenMeteoGeocoder", Geocoder)
+    response = TestClient(app).get("/api/v1/locations/search?name=East%20Delhi&country_code=IN")
+    assert response.status_code == 200
+    assert response.json()["results"][0]["country"] == "India"
+    assert response.json()["results"][0]["latitude"] == 28.65
+
+
 def test_air_quality_endpoint_persists_provider_forecast(monkeypatch):
     class DB:
         def __init__(self):
@@ -163,6 +178,43 @@ def test_registration_preferences_and_account_isolation():
     client_b, _csrf_b = signed_in("other@example.com")
     assert client_b.get("/api/v1/preferences").json()["sensitivity"] == "normal"
     assert client_b.get("/api/v1/preferences").json()["home_location"] is None
+
+
+def test_saved_places_crud_and_user_isolation():
+    client_a, csrf_a = signed_in()
+    payload = {"name": "College", "latitude": 18.52, "longitude": 73.85, "place_label": "Pune"}
+    created = client_a.post("/api/v1/locations/saved", json=payload, headers=csrf_a)
+    assert created.status_code == 201
+    location_id = created.json()["id"]
+    assert client_a.get("/api/v1/locations/saved").json()[0]["name"] == "College"
+    duplicate = client_a.post("/api/v1/locations/saved", json={**payload, "name": "college"}, headers=csrf_a)
+    assert duplicate.status_code == 409
+    assert client_a.patch(f"/api/v1/locations/saved/{location_id}", json={"name": "Office"}, headers=csrf_a).json()["name"] == "Office"
+    duplicate_rename = client_a.post("/api/v1/locations/saved", json={**payload, "name": "Another", "latitude": 19.0}, headers=csrf_a)
+    assert duplicate_rename.status_code == 201
+    renamed_collision = client_a.patch(f"/api/v1/locations/saved/{location_id}", json={"name": "another"}, headers=csrf_a)
+    assert renamed_collision.status_code == 409
+    client_b, csrf_b = signed_in("other@example.com")
+    assert client_b.get("/api/v1/locations/saved").json() == []
+    assert client_b.patch(f"/api/v1/locations/saved/{location_id}", json={"name": "Stolen"}, headers=csrf_b).status_code == 404
+    assert client_b.delete(f"/api/v1/locations/saved/{location_id}", headers=csrf_b).status_code == 404
+    assert client_a.delete(f"/api/v1/locations/saved/{location_id}", headers=csrf_a).status_code == 204
+
+
+def test_saved_places_empty_state_is_200_and_endpoint_requires_authentication():
+    anonymous = TestClient(app)
+    assert anonymous.get("/api/v1/locations/saved").status_code == 401
+    client, _csrf = signed_in()
+    response = client.get("/api/v1/locations/saved")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_saved_location_requires_csrf_and_valid_coordinates():
+    client, _headers = signed_in()
+    assert client.post("/api/v1/locations/saved", json={"name": "x", "latitude": 91, "longitude": 0}).status_code == 403
+    response = client.post("/api/v1/locations/saved", headers={"X-CSRF-Token": _headers["X-CSRF-Token"]}, json={"name": "x", "latitude": 91, "longitude": 0})
+    assert response.status_code == 422
 
 
 def test_register_saves_display_name_to_account():
