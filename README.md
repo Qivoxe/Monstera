@@ -202,5 +202,3 @@ Built as a hackathon project to make air-quality forecasts more actionable for e
 
 **Contributer:- Shivam, TANYA GARG**
 
-All the animal 
-
