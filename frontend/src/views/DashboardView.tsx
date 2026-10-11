@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { TabType } from '../types';
-import { AuthUser, getPm25Forecast, getPlannerSummary, PlannerSummary, Preferences } from '../api';
+import { AuthUser, getPm25Forecast, getPlannerSummary, getSavedLocations, PlannerSummary, Preferences, SavedLocation } from '../api';
 
 interface DashboardViewProps {
   onNavigateTab: (tab: TabType) => void;
@@ -13,6 +13,8 @@ export function DashboardView({ onNavigateTab, user, preferences }: DashboardVie
   const [forecastError, setForecastError] = useState<string | null>(null);
   const [planner, setPlanner] = useState<PlannerSummary | null>(null);
   const [plannerError, setPlannerError] = useState<string | null>(null);
+  const [savedPlaces, setSavedPlaces] = useState<SavedLocation[]>([]);
+  const [savedPlacesError, setSavedPlacesError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -28,6 +30,12 @@ export function DashboardView({ onNavigateTab, user, preferences }: DashboardVie
     setPlanner(null); setPlannerError(null);
     getPlannerSummary().then((data) => { if (active) setPlanner(data); })
       .catch((error: Error) => { if (active) setPlannerError(error.message); });
+    return () => { active = false; };
+  }, [user.id]);
+
+  useEffect(() => {
+    let active = true;
+    getSavedLocations().then((data) => { if (active) { setSavedPlaces(data); setSavedPlacesError(null); } }).catch((error: Error) => { if (active) setSavedPlacesError(error.message); });
     return () => { active = false; };
   }, [user.id]);
 
@@ -71,6 +79,11 @@ export function DashboardView({ onNavigateTab, user, preferences }: DashboardVie
             <p className="mt-3 text-xs text-[#6f7a72]">{planner.coverage_note}</p>
           </> : <p className="mt-6 text-sm text-[#6f7a72]">{plannerError || 'Loading your saved activity…'}</p>}
         </article>
+      </section>
+
+      <section className="rounded-2xl bg-white border border-[#edeee9] p-5 flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="font-headline font-bold">Your places</h2><p className="mt-1 text-sm text-[#6f7a72]">Home: {preferences.home_location}{savedPlacesError ? ` · Saved places unavailable: ${savedPlacesError}` : savedPlaces.length ? ` · ${savedPlaces.map((place) => place.name).join(' · ')}` : ' · No saved places yet; add places on the map.'}</p></div>
+        <button onClick={() => onNavigateTab('map')} className="rounded-xl border border-[#bfc9c0] px-4 py-2 text-sm font-semibold text-[#0c6440]">Manage places and routes</button>
       </section>
 
       <section className="rounded-2xl bg-white border border-[#edeee9] p-6">

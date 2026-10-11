@@ -11,10 +11,12 @@ from app.api.dependencies import current_auth
 from app.core.config import get_settings
 from app.core.security import digest_secret, hash_password, issue_secret, verify_password
 from app.db.session import get_db
-from app.models import ActivitySegmentRecord, ExposureEstimate, Intervention, PollutionReading, SavedRoutine, SimulationRun, User, UserLog, UserPreference, UserSession
-from app.schemas import ActionLogRequest, AirQualityResponse, AuthResponse, Credentials, ExposureRequest, ExposureResponse, InterventionUpdate, LocationResponse, PlannerSummary, PreferenceResponse, PreferenceUpdate, RoutineCreate, RoutineResponse, SimulationRequest, SimulationResponse
+from app.models import ActivitySegmentRecord, ExposureEstimate, Intervention, PollutionReading, SavedLocation, SavedRoutine, SimulationRun, User, UserLog, UserPreference, UserSession
+from app.schemas import ActionLogRequest, AirQualityResponse, AuthResponse, Credentials, ExposureRequest, ExposureResponse, InterventionUpdate, LocationResponse, LocationSearchResponse, PlannerSummary, PreferenceResponse, PreferenceUpdate, RouteCompareRequest, RouteCompareResponse, RoutineCreate, RoutineResponse, SavedLocationCreate, SavedLocationResponse, SavedLocationUpdate, SimulationRequest, SimulationResponse
 from app.services.air_quality import OpenMeteoGeocoder, OpenMeteoProvider
 from app.services.exposure import estimate_exposure
+from app.services.routing import OSRMRouter
+from app.services.route_exposure import compare_exposure
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
@@ -136,7 +138,7 @@ async def air_quality_forecast(
 ):
     provider = OpenMeteoProvider(get_settings().open_meteo_base_url)
     data = await provider.get_pm25(latitude, longitude, hours)
-    now = datetime.now(timezone.utc)
+    now = datetime.fromisoformat(data.get("retrieved_at", datetime.now(timezone.utc).isoformat()))
     for item in data["items"]:
         reading = PollutionReading(
             pollutant="pm2_5", value=item["value"], unit="µg/m³", data_kind="forecast",
@@ -163,12 +165,95 @@ async def air_quality_forecast(
         "requested_location": {"latitude": latitude, "longitude": longitude},
         "items": [{**item, "grid_location": data["grid_location"]} for item in data["items"]],
         "attribution": "Air-quality forecast: Open-Meteo using the Copernicus Atmosphere Monitoring Service (CAMS). Forecast grid resolution is regional and does not represent a local sensor measurement.",
+        "source": "Open-Meteo / CAMS", "kind": "forecast", "retrieved_at": now.isoformat(),
+        "freshness": "provider data retrieved or served from the application cache; forecast valid_at timestamps identify the model forecast hour",
     }
 
 
-@router.get("/locations/search", response_model=LocationResponse)
-async def search_location(name: str = Query(min_length=2, max_length=120)):
-    return await OpenMeteoGeocoder().search(name)
+@router.get("/locations/search", response_model=LocationSearchResponse)
+async def search_location(
+    name: str = Query(min_length=2, max_length=120),
+    country_code: str | None = Query(default=None, min_length=2, max_length=2, pattern="^[A-Za-z]{2}$"),
+):
+    return await OpenMeteoGeocoder().search(name, country_code)
+
+
+def _saved_location(row: SavedLocation):
+    return {"id": str(row.id), "name": row.name, "latitude": row.latitude, "longitude": row.longitude,
+            "place_label": row.place_label, "created_at": row.created_at, "updated_at": row.updated_at}
+
+
+@router.get("/locations/saved", response_model=list[SavedLocationResponse])
+def list_saved_locations(auth=Depends(current_auth), db: Session = Depends(get_db)):
+    user, _session = auth
+    rows = db.scalars(select(SavedLocation).where(SavedLocation.user_id == user.id).order_by(SavedLocation.created_at))
+    return [_saved_location(row) for row in rows]
+
+
+@router.post("/locations/saved", response_model=SavedLocationResponse, status_code=201)
+def create_saved_location(payload: SavedLocationCreate, auth=Depends(current_auth), db: Session = Depends(get_db)):
+    user, _session = auth
+    candidates = list(db.scalars(select(SavedLocation).where(SavedLocation.user_id == user.id)))
+    if any(row.name.casefold() == payload.name.casefold() or (
+        round(row.latitude, 5) == round(payload.latitude, 5) and round(row.longitude, 5) == round(payload.longitude, 5)
+    ) for row in candidates):
+        raise HTTPException(status_code=409, detail="A saved place with this name or location already exists")
+    row = SavedLocation(user_id=user.id, name=payload.name.strip(), latitude=payload.latitude,
+                        longitude=payload.longitude, place_label=payload.place_label)
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A saved place with this name already exists") from exc
+    db.refresh(row)
+    return _saved_location(row)
+
+
+@router.patch("/locations/saved/{location_id}", response_model=SavedLocationResponse)
+def update_saved_location(location_id: UUID, payload: SavedLocationUpdate, auth=Depends(current_auth), db: Session = Depends(get_db)):
+    user, _session = auth
+    row = db.scalar(select(SavedLocation).where(SavedLocation.id == location_id, SavedLocation.user_id == user.id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Saved location not found")
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and updates["name"] is not None:
+        duplicate = any(other.id != row.id and other.name.casefold() == updates["name"].strip().casefold()
+                        for other in db.scalars(select(SavedLocation).where(SavedLocation.user_id == user.id)))
+        if duplicate:
+            raise HTTPException(status_code=409, detail="A saved place with this name already exists")
+    for key, value in updates.items():
+        setattr(row, key, value.strip() if key == "name" and value is not None else value)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A saved place with this name already exists") from exc
+    db.refresh(row)
+    return _saved_location(row)
+
+
+@router.delete("/locations/saved/{location_id}", status_code=204)
+def delete_saved_location(location_id: UUID, auth=Depends(current_auth), db: Session = Depends(get_db)):
+    user, _session = auth
+    row = db.scalar(select(SavedLocation).where(SavedLocation.id == location_id, SavedLocation.user_id == user.id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Saved location not found")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/routes/compare", response_model=RouteCompareResponse)
+async def compare_routes(payload: RouteCompareRequest, auth=Depends(current_auth)):
+    settings = get_settings()
+    route_data = await OSRMRouter(settings.routing_provider_url, settings.routing_timeout_seconds,
+                                  settings.routing_max_alternatives, settings.route_cache_ttl_seconds).route(
+        payload.origin.model_dump(), payload.destination.model_dump())
+    result = await compare_exposure(route_data, _utc(payload.departure_at),
+                                    OpenMeteoProvider(settings.open_meteo_base_url),
+                                    settings.routing_sample_interval_m, settings.routing_max_samples_per_route)
+    return result
 
 
 @router.post("/exposure/estimates", response_model=ExposureResponse)

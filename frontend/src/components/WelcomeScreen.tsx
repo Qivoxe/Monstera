@@ -1,5 +1,5 @@
-import { FormEvent, useState } from 'react';
-import { AuthUser, GeocodedLocation, getPreferences, geocodeLocation, login, Preferences, register, savePreferences } from '../api';
+import { FormEvent, useRef, useState } from 'react';
+import { AuthUser, formatPlaceName, GeocodedLocation, getPreferences, geocodeLocation, login, prefersIndiaSearch, Preferences, register, savePreferences } from '../api';
 
 interface WelcomeScreenProps {
   onComplete: (user: AuthUser, preferences: Preferences) => void;
@@ -18,14 +18,16 @@ export function WelcomeScreen({ onComplete, initialUser = null }: WelcomeScreenP
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [location, setLocation] = useState('');
+  const [matches, setMatches] = useState<GeocodedLocation[]>([]);
+  const [chosenPlace, setChosenPlace] = useState<GeocodedLocation | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchGeneration = useRef(0);
 
-  const saveLocation = async (user: AuthUser, existing: Preferences) => {
-    const match: GeocodedLocation = await geocodeLocation(location.trim());
+  const saveLocation = async (user: AuthUser, existing: Preferences, match: GeocodedLocation) => {
     const preferences = await savePreferences({
       ...existing,
-      home_location: [match.name, match.country].filter(Boolean).join(', '),
+      home_location: formatPlaceName(match),
       home_latitude: match.latitude,
       home_longitude: match.longitude,
     });
@@ -33,22 +35,35 @@ export function WelcomeScreen({ onComplete, initialUser = null }: WelcomeScreenP
   };
 
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null);
+    event.preventDefault(); const generation = ++searchGeneration.current; setBusy(true); setError(null);
     try {
       if (pendingUser) {
-        await saveLocation(pendingUser, await getPreferences());
+        if (!chosenPlace) {
+          const response = await geocodeLocation(location.trim(), prefersIndiaSearch() && !location.includes(',') ? 'IN' : undefined);
+          if (generation !== searchGeneration.current) return;
+          setMatches(response.results);
+          if (!response.results.length) setError('No matching places were found. Check the spelling or add a country or region.');
+          return;
+        }
+        await saveLocation(pendingUser, await getPreferences(), chosenPlace);
         return;
       }
       if (mode === 'register') {
         if (displayName.trim().length < 2) throw new Error('Enter your name to create your profile.');
         if (location.trim().length < 2) throw new Error('Enter your city or town to personalize your air-quality forecast.');
-        const place = await geocodeLocation(location.trim());
+        if (!chosenPlace) {
+          const response = await geocodeLocation(location.trim(), prefersIndiaSearch() && !location.includes(',') ? 'IN' : undefined);
+          if (generation !== searchGeneration.current) return;
+          setMatches(response.results);
+          if (!response.results.length) setError('No matching places were found. Check the spelling or add a country or region.');
+          return;
+        }
         const user = await register(displayName.trim(), email, password);
         const preferences = await savePreferences({
           ...DEFAULT_PREFERENCES,
-          home_location: [place.name, place.country].filter(Boolean).join(', '),
-          home_latitude: place.latitude,
-          home_longitude: place.longitude,
+          home_location: formatPlaceName(chosenPlace),
+          home_latitude: chosenPlace.latitude,
+          home_longitude: chosenPlace.longitude,
         });
         onComplete(user, preferences);
       } else {
@@ -91,12 +106,18 @@ export function WelcomeScreen({ onComplete, initialUser = null }: WelcomeScreenP
           </>}
           {(completingProfile || mode === 'register') && (
             <label className="block text-sm font-medium text-[#3f4942]">City or town
-              <input required minLength={2} maxLength={120} autoComplete="address-level2" placeholder="Enter your location" value={location} onChange={(e) => setLocation(e.target.value)} className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f9faf5] px-3.5 py-3" />
+          <input required minLength={2} maxLength={120} autoComplete="address-level2" placeholder="City or place, optionally with region/country" value={location} onChange={(e) => { searchGeneration.current += 1; setLocation(e.target.value); setChosenPlace(null); setMatches([]); }} className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f9faf5] px-3.5 py-3" />
             </label>
           )}
+          {matches.length > 0 && <div role="radiogroup" aria-label="Choose your location" className="space-y-2 rounded-xl bg-[#f3f4ef] p-3">
+            <p className="text-xs font-semibold text-[#3f4942]">Choose the matching place. Forecasts will use its listed coordinates.</p>
+            {matches.map((place, index) => <button type="button" key={`${place.id ?? index}-${place.latitude}-${place.longitude}`} onClick={() => { searchGeneration.current += 1; setChosenPlace(place); }} aria-pressed={chosenPlace?.id === place.id && chosenPlace?.latitude === place.latitude && chosenPlace?.longitude === place.longitude} className={`w-full rounded-lg border p-2 text-left text-sm ${chosenPlace?.latitude === place.latitude && chosenPlace?.longitude === place.longitude ? 'border-[#0c6440] bg-white' : 'border-transparent bg-white/60'}`}>
+              <span className="block font-semibold">{formatPlaceName(place)}</span><span className="text-xs text-[#6f7a72]">{place.latitude.toFixed(4)}, {place.longitude.toFixed(4)}</span>
+            </button>)}
+          </div>}
           {error && <p role="alert" className="text-sm text-[#ba1a1a]">{error}</p>}
-          <button disabled={busy} className="w-full rounded-xl bg-[#0c6440] py-3 text-sm font-semibold text-white disabled:opacity-50">
-            {busy ? 'Please wait…' : completingProfile ? 'Save location and continue' : mode === 'register' ? 'Create account and continue' : 'Sign in'}
+          <button disabled={busy || ((completingProfile || mode === 'register') && location.trim().length < 2)} className="w-full rounded-xl bg-[#0c6440] py-3 text-sm font-semibold text-white disabled:opacity-50">
+            {busy ? 'Please wait…' : completingProfile ? chosenPlace ? 'Save selected location' : 'Search locations' : mode === 'register' ? chosenPlace ? 'Create account with selected location' : 'Search locations' : 'Sign in'}
           </button>
         </form>
         {!completingProfile && <button type="button" onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setError(null); }} className="w-full mt-4 text-sm text-[#0c6440]">

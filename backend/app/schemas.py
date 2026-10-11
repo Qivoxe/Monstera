@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ErrorResponse(BaseModel):
@@ -23,13 +23,108 @@ class AirQualityResponse(BaseModel):
     requested_location: dict[str, float]
     items: list[AirQualityItem]
     attribution: str
+    source: str | None = None
+    kind: Literal["forecast"] | None = None
+    retrieved_at: datetime | None = None
+    freshness: str | None = None
 
 
 class LocationResponse(BaseModel):
+    id: int | None = None
     name: str
-    country: str | None
+    country: str | None = None
     latitude: float
     longitude: float
+    country_code: str | None = None
+    admin1: str | None = None
+    admin2: str | None = None
+    admin3: str | None = None
+    admin4: str | None = None
+
+
+class LocationSearchResponse(BaseModel):
+    # Top-level fields preserve the legacy single-result response for older clients.
+    id: int | None = None
+    name: str | None = None
+    country: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    country_code: str | None = None
+    admin1: str | None = None
+    admin2: str | None = None
+    admin3: str | None = None
+    admin4: str | None = None
+    results: list[LocationResponse]
+
+
+class SavedLocationCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    place_label: str | None = Field(default=None, max_length=160)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("name must contain a visible character")
+        return value
+
+
+class SavedLocationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    place_label: str | None = Field(default=None, max_length=160)
+
+    @field_validator("name")
+    @classmethod
+    def update_name_not_blank(cls, value: str | None):
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("name must contain a visible character")
+        return value
+
+
+class SavedLocationResponse(BaseModel):
+    id: str
+    name: str
+    latitude: float
+    longitude: float
+    place_label: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class Coordinates(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+class RouteCompareRequest(BaseModel):
+    origin: Coordinates
+    destination: Coordinates
+    departure_at: datetime
+    mode: Literal["driving"] = "driving"
+
+    @model_validator(mode="after")
+    def timezone_required(self):
+        if self.departure_at.utcoffset() is None:
+            raise ValueError("departure_at must include a timezone")
+        now = datetime.now(self.departure_at.tzinfo)
+        if self.departure_at < now - timedelta(minutes=5) or self.departure_at > now + timedelta(hours=48):
+            raise ValueError("departure_at must be within the next 48 hours")
+        return self
+
+
+class RouteCompareResponse(BaseModel):
+    status: Literal["comparable", "insufficient_data"]
+    recommendation: str | None
+    routes: list[dict]
+    methodology: list[str]
 
 
 class ActivitySegment(BaseModel):
@@ -176,3 +271,4 @@ class InterventionUpdate(BaseModel):
 class ActionLogRequest(BaseModel):
     event_type: str = Field(pattern="^(filter_replacement|mask_reminder)$")
     payload: dict = Field(default_factory=dict)
+    id: int | None = None

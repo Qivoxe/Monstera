@@ -1,5 +1,5 @@
-import { FormEvent, useState } from 'react';
-import { AuthUser, createSimulation, geocodeLocation, getPm25Forecast, Preferences, saveRoutine, SimulationResult } from '../api';
+import { FormEvent, useRef, useState } from 'react';
+import { AuthUser, createSimulation, formatPlaceName, GeocodedLocation, geocodeLocation, getPm25Forecast, prefersIndiaSearch, Preferences, saveRoutine, SimulationResult } from '../api';
 
 interface SimulationViewProps { user: AuthUser; preferences: Preferences; onShowToast: (message: string) => void }
 
@@ -15,6 +15,8 @@ function concentrationAt(items: Awaited<ReturnType<typeof getPm25Forecast>>['ite
 
 export function SimulationView({ user, preferences, onShowToast }: SimulationViewProps) {
   const [destination, setDestination] = useState('');
+  const [destinationMatches, setDestinationMatches] = useState<GeocodedLocation[]>([]);
+  const [selectedDestination, setSelectedDestination] = useState<GeocodedLocation | null>(null);
   const [baselineTime, setBaselineTime] = useState('');
   const [alternativeTime, setAlternativeTime] = useState('');
   const [duration, setDuration] = useState('');
@@ -22,28 +24,39 @@ export function SimulationView({ user, preferences, onShowToast }: SimulationVie
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const searchGeneration = useRef(0);
 
   const compare = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null); setComparison(null); setSaved(false);
+    event.preventDefault(); const generation = ++searchGeneration.current; setBusy(true); setError(null); setComparison(null); setSaved(false);
     const minutes = Number(duration);
     if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 1440) { setError('Enter a trip duration from 1 to 1440 minutes.'); setBusy(false); return; }
     try {
-      const place = await geocodeLocation(destination.trim());
+      if (!selectedDestination) {
+        const homeIsIndia = preferences.home_latitude !== null && preferences.home_longitude !== null && preferences.home_latitude >= 6.5 && preferences.home_latitude <= 37.6 && preferences.home_longitude >= 68 && preferences.home_longitude <= 97.5;
+        const matches = await geocodeLocation(destination.trim(), (homeIsIndia || prefersIndiaSearch()) && !destination.includes(',') ? 'IN' : undefined);
+        if (generation !== searchGeneration.current) return;
+        setDestinationMatches(matches.results);
+        if (!matches.results.length) setError('No matching destination found. Check the name or add a country or region.');
+        return;
+      }
+      const place = selectedDestination;
       const [homeForecast, destinationForecast] = await Promise.all([
         getPm25Forecast(preferences.home_latitude!, preferences.home_longitude!),
         getPm25Forecast(place.latitude, place.longitude),
       ]);
+      if (generation !== searchGeneration.current) return;
       const source = 'Open-Meteo / CAMS regional forecasts averaged at the trip endpoints';
       const baseline = (concentrationAt(homeForecast.items, baselineTime) + concentrationAt(destinationForecast.items, baselineTime)) / 2;
       const alternative = (concentrationAt(homeForecast.items, alternativeTime) + concentrationAt(destinationForecast.items, alternativeTime)) / 2;
       const input = {
         baseline: { concentration_ug_m3: baseline, duration_minutes: minutes, source, concentration_kind: 'forecast' as const },
         alternative: { concentration_ug_m3: alternative, duration_minutes: minutes, source, concentration_kind: 'forecast' as const },
-        context: { origin: preferences.home_location!, destination: [place.name, place.country].filter(Boolean).join(', '), baseline_time: baselineTime, alternative_time: alternativeTime },
+        context: { origin: preferences.home_location!, destination: formatPlaceName(place), baseline_time: baselineTime, alternative_time: alternativeTime },
       };
       const result = await createSimulation(input);
+      if (generation !== searchGeneration.current) return;
       setComparison({ baseline, alternative, source, result });
-    } catch (err) { setError(err instanceof Error ? err.message : 'Could not compare these forecast windows.'); }
+    } catch (err) { if (generation === searchGeneration.current) setError(err instanceof Error ? err.message : 'Could not compare these forecast windows.'); }
     finally { setBusy(false); }
   };
 
@@ -70,8 +83,9 @@ export function SimulationView({ user, preferences, onShowToast }: SimulationVie
           <input readOnly value={preferences.home_location ?? ''} className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f3f4ef] px-3.5 py-3" />
         </label>
         <label className="text-sm font-medium text-[#3f4942]">Destination
-          <input required minLength={2} value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="Enter a destination" className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f9faf5] px-3.5 py-3" />
+          <input required minLength={2} value={destination} onChange={(e) => { searchGeneration.current += 1; setDestination(e.target.value); setSelectedDestination(null); setDestinationMatches([]); }} placeholder="Enter a destination" className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f9faf5] px-3.5 py-3" />
         </label>
+        {destinationMatches.length > 0 && <div role="radiogroup" aria-label="Choose destination" className="sm:col-span-2 rounded-xl bg-[#f3f4ef] p-3 space-y-2"><p className="text-xs font-semibold">Choose the intended place; its coordinates will be used for the forecast.</p>{destinationMatches.map((place, index) => <button type="button" key={`${place.id ?? index}-${place.latitude}-${place.longitude}`} onClick={() => { searchGeneration.current += 1; setSelectedDestination(place); }} className={`block w-full rounded-lg border p-2 text-left text-sm ${selectedDestination?.latitude === place.latitude && selectedDestination?.longitude === place.longitude ? 'border-[#0c6440] bg-white' : 'border-transparent bg-white/60'}`}><span className="block font-semibold">{formatPlaceName(place)}</span><span className="text-xs text-[#6f7a72]">{place.latitude.toFixed(4)}, {place.longitude.toFixed(4)}</span></button>)}</div>}
         <label className="text-sm font-medium text-[#3f4942]">Current departure time
           <input required type="time" value={baselineTime} onChange={(e) => setBaselineTime(e.target.value)} className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f9faf5] px-3.5 py-3" />
         </label>
@@ -81,7 +95,7 @@ export function SimulationView({ user, preferences, onShowToast }: SimulationVie
         <label className="text-sm font-medium text-[#3f4942]">Trip duration (minutes)
           <input required type="number" min="1" max="1440" step="1" value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="Enter estimated duration" className="mt-1.5 w-full rounded-xl border border-[#e2e3de] bg-[#f9faf5] px-3.5 py-3" />
         </label>
-        <div className="sm:col-span-2"><button disabled={busy} className="w-full sm:w-auto rounded-xl bg-[#0c6440] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Comparing forecasts…' : 'Compare forecast windows'}</button></div>
+        <div className="sm:col-span-2"><button disabled={busy} className="w-full sm:w-auto rounded-xl bg-[#0c6440] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Comparing forecasts…' : selectedDestination ? 'Compare selected destination' : 'Find destination'}</button></div>
       </form>
       {error && <p role="alert" className="rounded-xl bg-[#ffdad6] p-3 text-sm text-[#93000a]">{error}</p>}
       {comparison && <section className="rounded-2xl bg-white border border-[#edeee9] p-5 sm:p-6 space-y-4">
