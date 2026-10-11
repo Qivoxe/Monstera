@@ -1,5 +1,4 @@
 # Monstera 🌿
-
 ### Hyper-local air intelligence
 
 Monstera helps people make more informed day-to-day decisions around air pollution. Instead of showing a pollution number without context, it brings a regional PM2.5 forecast, a saved location, exposure logging, and commute-time comparisons into one place.
@@ -40,19 +39,16 @@ New accounts begin with an empty activity log. The forecast can still be viewed 
 ## Screenshots
 
 ### Dashboard
-
 The dashboard puts the current regional PM2.5 forecast, saved activity summary, and next-hours outlook in one view.
 
 ![Monstera dashboard](docs/images/dashboard.png)
 
 ### Pollution map
-
 The map page shows the user's saved location alongside the hourly forecast. Forecast values are regional model data and may represent a nearby grid cell.
 
 ![Monstera pollution map](docs/images/pollution-map.png)
 
 ### Commute simulation
-
 The simulation page compares forecast windows for different departure times using a destination and estimated trip duration.
 
 ![Monstera commute simulation](docs/images/simulation.png)
@@ -86,16 +82,16 @@ The application has been built with a separate frontend and backend. The fronten
 
 ## Tech stack
 
-| Area                       | Technologies                                                                           |
-| -------------------------- | -------------------------------------------------------------------------------------- |
-| Frontend                   | React 19, TypeScript, Vite, Tailwind CSS, Leaflet                                      |
-| Web server / proxy         | Node.js, Express                                                                       |
-| Backend API                | Python, FastAPI, Pydantic Settings                                                     |
-| Data layer                 | SQLAlchemy, Alembic                                                                    |
-| Local development database | SQLite                                                                                 |
-| Forecast and geocoding     | Open-Meteo, Copernicus CAMS                                                            |
-| Authentication             | Argon2 password hashing, HTTP-only session cookies, CSRF protection for write requests |
-| Backend hosting            | AWS Elastic Beanstalk                                                                  |
+| Area | Technologies |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, Leaflet |
+| Web server / proxy | Node.js, Express |
+| Backend API | Python, FastAPI, Pydantic Settings |
+| Data layer | SQLAlchemy, Alembic |
+| Local development database | SQLite |
+| Forecast and geocoding | Open-Meteo, Copernicus CAMS |
+| Authentication | Argon2 password hashing, HTTP-only session cookies, CSRF protection for write requests |
+| Backend hosting | AWS Elastic Beanstalk |
 
 ## Running locally
 
@@ -153,16 +149,16 @@ alembic upgrade head
 
 Application routes are grouped under `/api/v1`.
 
-| Route                                         | Purpose                                                       |
-| --------------------------------------------- | ------------------------------------------------------------- |
-| `/auth/*`                                     | Registration, login, logout, current session, account actions |
-| `/preferences`                                | User preferences and saved home location                      |
-| `/locations/search`                           | Search for a place using geocoding                            |
-| `/air-quality/forecast`                       | Retrieve and save forecast data                               |
-| `/exposure/estimates` and `/exposure/history` | Record and view exposure activity                             |
-| `/planner/*`                                  | Activity summaries and planning actions                       |
-| `/simulations` and `/routines`                | Commute comparisons and saved routines                        |
-| `/health` and `/ready`                        | API health and readiness checks                               |
+| Route | Purpose |
+|---|---|
+| `/auth/*` | Registration, login, logout, current session, account actions |
+| `/preferences` | User preferences and saved home location |
+| `/locations/search` | Search for a place using geocoding |
+| `/air-quality/forecast` | Retrieve and save forecast data |
+| `/exposure/estimates` and `/exposure/history` | Record and view exposure activity |
+| `/planner/*` | Activity summaries and planning actions |
+| `/simulations` and `/routines` | Commute comparisons and saved routines |
+| `/health` and `/ready` | API health and readiness checks |
 
 For the full route list and request schemas, use the live [FastAPI Swagger documentation](http://monstera-env.eba-ua9xcq9e.ap-southeast-2.elasticbeanstalk.com/docs).
 
@@ -190,4 +186,4 @@ Built as a hackathon project to make air-quality forecasts more actionable for e
 
 ---
 
-_Forecast data is informational and should not be treated as medical advice or as a substitute for official public-health guidance._
+*Forecast data is informational and should not be treated as medical advice or as a substitute for official public-health guidance.*
