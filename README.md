@@ -187,3 +187,6 @@ Built as a hackathon project to make air-quality forecasts more actionable for e
 ---
 
 *Forecast data is informational and should not be treated as medical advice or as a substitute for official public-health guidance.*
+
+**Contributer:- Shivam, TANYA GARG**
+
